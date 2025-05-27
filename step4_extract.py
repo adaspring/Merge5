@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Post-process translated HTML files to:
-1. Update lang attribute
-2. Add language suffixes to internal links
-3. Update active class in language switcher
+Enhanced HTML post-processor with:
+1. Better link handling
+2. Error resilience
+3. Cleaner output formatting
 """
 
 import argparse
@@ -13,69 +13,76 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 
 def process_html_file(input_file, target_lang):
-    # Read the input file
-    with open(input_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Parse with BeautifulSoup
-    soup = BeautifulSoup(content, 'html.parser')
-    
-    # 1. Update HTML lang attribute
-    if soup.html and soup.html.has_attr('lang'):
-        soup.html['lang'] = target_lang
-    
-    # 2. Add language suffixes to internal links
-    for link in soup.find_all('a', href=True):
-        href = link['href']
-        # Skip external links and anchors
-        if not href.startswith(('http', '#', 'mailto:')) and not href.endswith(('.pdf', '.jpg', '.png', '.jpeg')):
-            # Remove existing language suffix if present
-            base_href = re.sub(r'-(fr|es|zh|en)\.html$', '.html', href)
-            # Add new language suffix
-            if base_href.endswith('.html'):
-                new_href = base_href.replace('.html', f'-{target_lang}.html')
-                link['href'] = new_href
-    
-    # 3. Update active class in language switcher
-    for lang_switcher in soup.find_all(class_='language-switcher'):
-        for a in lang_switcher.find_all('a'):
-            # Remove active class from all links
-            if 'active' in a.get('class', []):
-                a['class'].remove('active')
-            # Add active class to current language
-            if a['href'].endswith(f'-{target_lang}.html'):
-                if a.get('class'):
-                    a['class'].append('active')
-                else:
-                    a['class'] = ['active']
-    
-    # Generate output filename
-    input_path = Path(input_file)
-    output_filename = f"{input_path.stem.replace('_FR', '')}-{target_lang}.html"
-    output_path = input_path.parent / output_filename
-    
-    # Write the modified content
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(str(soup))
-    
-    print(f"Processed file saved as: {output_path}")
+    try:
+        # Validate input file
+        input_path = Path(input_file)
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input file {input_file} not found")
+        
+        # Read with explicit UTF-8 encoding and error handling
+        with open(input_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        
+        # Parse with html.parser for consistency
+        soup = BeautifulSoup(content, 'html.parser')
+        
+        # 1. Update HTML lang attribute
+        if soup.html:
+            soup.html['lang'] = target_lang
+        
+        # 2. Process internal links
+        link_pattern = re.compile(r'^(?!http|#|mailto:).*\.html$')
+        for link in soup.find_all('a', href=link_pattern):
+            href = link['href']
+            # Preserve query strings and fragments
+            base, *extra = href.split('?')
+            base = re.sub(r'-(fr|es|zh|en)(?=\.html)', '', base)
+            new_href = base.replace('.html', f'-{target_lang}.html')
+            if extra:
+                new_href += '?' + '?'.join(extra)
+            link['href'] = new_href
+        
+        # 3. Update language switcher
+        for switcher in soup.find_all(class_='language-switcher'):
+            for link in switcher.find_all('a'):
+                classes = link.get('class', [])
+                if 'active' in classes:
+                    classes.remove('active')
+                if link['href'].endswith(f'-{target_lang}.html'):
+                    classes.append('active')
+                    link['class'] = classes
+        
+        # Generate output path
+        output_path = input_path.with_name(
+            input_path.stem.replace('_FR', '') + f'-{target_lang}.html'
+        )
+        
+        # Write output with proper formatting
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(str(soup.prettify()))
+        
+        print(f"✓ Successfully created: {output_path}")
+        return True
+        
+    except Exception as e:
+        print(f"✗ Error processing {input_file}: {str(e)}")
+        return False
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Post-process translated HTML files with language-specific adjustments"
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="Post-process translated HTML files"
     )
-    parser.add_argument("--input", required=True, 
-                       help="Path to input HTML file (final_deepl_FR.html or final_openai_FR.html)")
+    parser.add_argument("--input", required=True,
+                      help="Input HTML file path")
     parser.add_argument("--target-lang", required=True,
-                       help="Target language code (e.g., 'fr')")
+                      choices=['fr', 'es', 'zh', 'en'],
+                      help="Target language code")
     
     args = parser.parse_args()
     
-    if not os.path.exists(args.input):
-        print(f"Error: Input file {args.input} not found")
-        return
-    
-    process_html_file(args.input, args.target_lang)
+    if not process_html_file(args.input, args.target_lang):
+        exit(1)
 
 if __name__ == "__main__":
     main()
