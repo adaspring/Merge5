@@ -1,53 +1,53 @@
-name: Test HTML Merge & Post-Processing
+name: Test Step4 Merge
 
 on:
-  workflow_dispatch:  # Allows manual triggering
   push:
-    branches: [ main ]
     paths:
       - 'scripts/step4_merge.py'
-      - 'scripts/postprocess.py'
       - '.github/workflows/test_step4.yml'
       - 'inputs/non_translatable.html'
-      - 'inputs/*_translations.json'
+      - 'inputs/deepl_translations.json'
+      - 'inputs/openai_translations.json'
 
 jobs:
-  merge-and-process:
+  merge-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    
+
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
-      
-    - name: Set up Python
+
+    - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        cache: 'pip'  # Faster dependency installation
-        
-    - name: Install dependencies
+
+    - name: Install bs4
+      run: pip install beautifulsoup4
+
+    - name: Run step4_merge.py
       run: |
-        pip install beautifulsoup4
-        
-    - name: Create output directory
-      run: mkdir -p outputs
-      
-    - name: Run merge script (both translators)
-      run: |
+        mkdir -p outputs
         python scripts/step4_merge.py \
           --html inputs/non_translatable.html \
           --deepl inputs/deepl_translations.json \
           --openai inputs/openai_translations.json \
           --output-deepl outputs/final_deepl_FR.html \
           --output-openai outputs/final_openai_FR.html
-          
-    - name: Post-process outputs
+
+    - name: Post-process
       run: |
         python scripts/postprocess.py --input outputs/final_deepl_FR.html --target-lang fr
         python scripts/postprocess.py --input outputs/final_openai_FR.html --target-lang fr
-        
-    - name: Verify outputs
+
+    - name: Verify
       run: |
-        echo "Generated files:"
-        ls
+        [ -f outputs/final_deepl-fr.html ] || exit 1
+        [ -f outputs/final_openai-fr.html ] || exit 1
+        ls -lh outputs/
+
+    - name: Upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: merged-html
+        path: outputs/
