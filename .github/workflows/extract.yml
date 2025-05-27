@@ -27,30 +27,26 @@ jobs:
         python -m pip install --upgrade pip
         pip install beautifulsoup4
 
-    - name: Run step4_merge.py with DeepL
+    - name: Run step4_merge.py (both translations)
       run: |
         mkdir -p outputs
         python scripts/step4_merge.py \
           --html inputs/non_translatable.html \
           --deepl inputs/deepl_translations.json \
-          --output-deepl outputs/final_deepl_FR.html
-
-    - name: Run step4_merge.py with OpenAI
-      run: |
-        python scripts/step4_merge.py \
-          --html inputs/non_translatable.html \
           --openai inputs/openai_translations.json \
+          --output-deepl outputs/final_deepl_FR.html \
           --output-openai outputs/final_openai_FR.html
 
     - name: Verify outputs
       run: |
-        echo "Checking if output files were created:"
+        echo "Generated files:"
         ls -la outputs/
-        test -f outputs/final_deepl_FR.html && echo "DeepL output exists"
-        test -f outputs/final_openai_FR.html && echo "OpenAI output exists"
+        test -f outputs/final_deepl_FR.html && echo "✓ DeepL output exists"
+        test -f outputs/final_openai_FR.html && echo "✓ OpenAI output exists"
 
     - name: Post-process outputs
       run: |
+        echo "Creating language-specific versions..."
         python scripts/postprocess.py --input outputs/final_deepl_FR.html --target-lang fr
         python scripts/postprocess.py --input outputs/final_openai_FR.html --target-lang fr
         echo "Final files:"
