@@ -1,53 +1,124 @@
-name: Test Step4 Merge
+name: HTML Merge & Post-Processing
 
 on:
-  push:
-    paths:
-      - 'scripts/step4_merge.py'
-      - '.github/workflows/test_step4.yml'
-      - 'inputs/non_translatable.html'
-      - 'inputs/deepl_translations.json'
-      - 'inputs/openai_translations.json'
+  workflow_dispatch:
+    inputs:
+      target_lang:
+        description: "Target language code"
+        required: true
+        default: "fr"
+        type: choice
+        options: [fr, en, es, zh, de, it, pt]
+      merge_translations:
+        description: "Create final HTML files"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  DEEPL_AUTH_KEY: ${{ secrets.DEEPL_AUTH_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
-  merge-test:
+  merge-process:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-    - name: Checkout
+    - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Setup Python
+    - name: Validate inputs
+      run: |
+        echo "Selected target language: ${{ github.event.inputs.target_lang }}"
+        echo "Merge translations: ${{ github.event.inputs.merge_translations }}"
+        [ -d "outputs" ] || { echo "❌ Missing outputs directory"; exit 1; }
+
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.11'
+        cache: 'pip'
 
-    - name: Install bs4
-      run: pip install beautifulsoup4
-
-    - name: Run step4_merge.py
+    - name: Install dependencies
       run: |
-        mkdir -p outputs
-        python scripts/step4_merge.py \
-          --html inputs/non_translatable.html \
-          --deepl inputs/deepl_translations.json \
-          --openai inputs/openai_translations.json \
-          --output-deepl outputs/final_deepl_FR.html \
-          --output-openai outputs/final_openai_FR.html
+        pip install beautifulsoup4 html5lib
 
-    - name: Post-process
+    - name: Find HTML files to process
+      id: find-files
       run: |
-        python scripts/postprocess.py --input outputs/final_deepl_FR.html --target-lang fr
-        python scripts/postprocess.py --input outputs/final_openai_FR.html --target-lang fr
+        echo "Looking for non_translatable.html files..."
+        files=$(find outputs -name "non_translatable.html")
+        if [ -z "$files" ]; then
+          echo "❌ No HTML files found in outputs/"
+          exit 1
+        fi
+        echo "Found files:"
+        echo "$files"
+        echo "::set-output name=html_files::$(echo "$files" | jq -R -s -c 'split("\n")[:-1]')"
 
-    - name: Verify
+    - name: Process each file
+      env:
+        TARGET_LANG: ${{ github.event.inputs.target_lang }}
       run: |
-        [ -f outputs/final_deepl-fr.html ] || exit 1
-        [ -f outputs/final_openai-fr.html ] || exit 1
-        ls -lh outputs/
+        for html_file in ${{ steps.find-files.outputs.html_files }}; do
+          # Remove JSON array formatting
+          html_file=$(echo $html_file | tr -d '[],"')
+          [ -f "$html_file" ] || continue
+          
+          dir_path=$(dirname "$html_file")
+          base_name=$(basename "$dir_path")
 
-    - name: Upload
-      uses: actions/upload-artifact@v3
+          echo "📁 Processing: $base_name"
+          echo "📄 Source file: $html_file"
+
+          # Check for required translation files
+          required_files=(
+            "$dir_path/segments_only.json"
+            "$dir_path/openai_translations.json"
+          )
+          
+          missing=0
+          for req_file in "${required_files[@]}"; do
+            if [ ! -f "$req_file" ]; then
+              echo "❌ Missing: $(basename "$req_file")"
+              missing=1
+            fi
+          done
+          
+          [ $missing -eq 0 ] || continue
+
+          # Run step4_merge.py
+          python scripts/step4_merge.py \
+            --html "$html_file" \
+            --deepl "$dir_path/segments_only.json" \
+            --openai "$dir_path/openai_translations.json" \
+            --output-deepl "$dir_path/final_deepl_$TARGET_LANG.html" \
+            --output-openai "$dir_path/final_openai_$TARGET_LANG.html"
+
+          # Post-process both outputs
+          python scripts/postprocess.py \
+            --input "$dir_path/final_deepl_$TARGET_LANG.html" \
+            --target-lang "$TARGET_LANG"
+
+          python scripts/postprocess.py \
+            --input "$dir_path/final_openai_$TARGET_LANG.html" \
+            --target-lang "$TARGET_LANG"
+
+          echo "✅ Completed: $base_name"
+          echo "------------------------"
+        done
+
+    - name: Verify outputs
+      run: |
+        echo "🔍 Verifying generated files:"
+        find outputs -name "final_*-${{ github.event.inputs.target_lang }}.html" -exec ls -lh {} \;
+        count=$(find outputs -name "final_*-${{ github.event.inputs.target_lang }}.html" | wc -l)
+        echo "Generated $count final HTML files"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
       with:
-        name: merged-html
+        name: merged-html-${{ github.event.inputs.target_lang }}
         path: outputs/
+        retention-days: 3
