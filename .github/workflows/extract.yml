@@ -1,0 +1,63 @@
+name: Test Step4 Merge
+
+on:
+  push:
+    paths:
+      - 'scripts/step4_merge.py'
+      - '.github/workflows/test_step4.yml'
+  pull_request:
+    paths:
+      - 'scripts/step4_merge.py'
+      - '.github/workflows/test_step4.yml'
+
+jobs:
+  test-step4:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install beautifulsoup4
+
+    - name: Run step4_merge.py with DeepL
+      run: |
+        mkdir -p outputs
+        python scripts/step4_merge.py \
+          --html inputs/non_translatable.html \
+          --deepl inputs/deepl_translations.json \
+          --output-deepl outputs/final_deepl_FR.html
+
+    - name: Run step4_merge.py with OpenAI
+      run: |
+        python scripts/step4_merge.py \
+          --html inputs/non_translatable.html \
+          --openai inputs/openai_translations.json \
+          --output-openai outputs/final_openai_FR.html
+
+    - name: Verify outputs
+      run: |
+        echo "Checking if output files were created:"
+        ls -la outputs/
+        test -f outputs/final_deepl_FR.html && echo "DeepL output exists"
+        test -f outputs/final_openai_FR.html && echo "OpenAI output exists"
+
+    - name: Post-process outputs
+      run: |
+        python scripts/postprocess.py --input outputs/final_deepl_FR.html --target-lang fr
+        python scripts/postprocess.py --input outputs/final_openai_FR.html --target-lang fr
+        echo "Final files:"
+        ls -la outputs/*-fr.html
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: merged-html-files
+        path: outputs/
